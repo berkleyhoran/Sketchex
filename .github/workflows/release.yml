@@ -1,0 +1,210 @@
+name: Build & Release
+
+# Two ways to run this (same pattern as Reactex/Synthex, this
+# project's own sibling plugin):
+#   - Push a version tag (v0.2.0, v1.0.0, ...) -> builds all three
+#     platforms AND publishes a GitHub Release with every installer
+#     attached. This is the "ship a version" path.
+#   - "Run workflow" from the Actions tab (workflow_dispatch) -> builds
+#     all three platforms but does NOT create a release, just uploads
+#     the installers as downloadable workflow artifacts. Use this to
+#     test the pipeline itself without publishing anything.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Windows: VST3 + Standalone, packaged by the existing Inno Setup
+  # script into a single SketchexSetup-style installer.
+  # ---------------------------------------------------------------------
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+
+      # ilammy/msvc-dev-cmd locates the MSVC toolchain itself and exports
+      # PATH/INCLUDE/LIB so Ninja can build directly against cl.exe --
+      # more reliable than letting CMake's Visual Studio generator do its
+      # own VS-install discovery (see Kaleidosonic's own release.yml,
+      # which this is adapted from, for the discovery failures that led
+      # to this choice).
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DSKETCHEX_VERSION=${{ steps.version.outputs.version }}"
+
+      - name: Build VST3
+        run: cmake --build build --target Sketchex_VST3
+
+      - name: Build Standalone
+        run: cmake --build build --target Sketchex_Standalone
+
+      - name: Build installer
+        # Inno Setup 6 ships preinstalled on the windows-2022 runner
+        # image. /D overrides the .iss's AppVersion default (see the
+        # #ifndef guard in Installer/Sketchex.iss) without editing the
+        # file.
+        shell: cmd
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=${{ steps.version.outputs.version }} Installer\Sketchex.iss'
+
+      - name: Rename artifact
+        shell: bash
+        run: mv "Installer/Output/SketchexSetup.exe" "Sketchex-${{ steps.version.outputs.version }}-windows.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: Sketchex-*-windows.exe
+
+  # ---------------------------------------------------------------------
+  # macOS: VST3 + AU + Standalone .app, zipped together. Unsigned/
+  # un-notarized for now -- Gatekeeper will show an "unidentified
+  # developer" warning users have to right-click-Open through once.
+  # Revisit if/when there's an Apple Developer Program membership to
+  # notarize with (same documented limitation as Kaleidosonic).
+  # ---------------------------------------------------------------------
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure
+        run: cmake -B build -G Xcode "-DSKETCHEX_VERSION=${{ steps.version.outputs.version }}"
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target Sketchex_VST3
+
+      - name: Build AU
+        run: cmake --build build --config Release --target Sketchex_AU
+
+      - name: Build Standalone
+        run: cmake --build build --config Release --target Sketchex_Standalone
+
+      - name: Package
+        run: |
+          set -e
+          VERSION="${{ steps.version.outputs.version }}"
+          STAGE="Sketchex-macos"
+          BUILD_DIR="build/Sketchex_artefacts/Release"
+          mkdir -p "$STAGE"
+          cp -R "$BUILD_DIR/VST3/Sketchex.vst3" "$STAGE/"
+          cp -R "$BUILD_DIR/AU/Sketchex.component" "$STAGE/"
+          cp -R "$BUILD_DIR/Standalone/Sketchex.app" "$STAGE/"
+          ditto -c -k --sequesterRsrc --keepParent "$STAGE" "Sketchex-$VERSION-macos.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: Sketchex-*-macos.zip
+
+  # ---------------------------------------------------------------------
+  # Linux: VST3 + Standalone binary, plain tarball (Linux plugin users
+  # are generally comfortable copying a .vst3 into ~/.vst3 themselves --
+  # no single packaging convention dominates the way .exe/.dmg do).
+  # ---------------------------------------------------------------------
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install JUCE Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
+            libwebkit2gtk-4.1-dev \
+            libglu1-mesa-dev mesa-common-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DSKETCHEX_VERSION=${{ steps.version.outputs.version }}"
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target Sketchex_VST3 -- -j$(nproc)
+
+      - name: Build Standalone
+        run: cmake --build build --config Release --target Sketchex_Standalone -- -j$(nproc)
+
+      - name: Run tests
+        run: |
+          cmake --build build --config Release --target SketchexCoreTests SketchexProcessorSmoke -- -j$(nproc)
+          ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          set -e
+          VERSION="${{ steps.version.outputs.version }}"
+          STAGE="Sketchex-linux-x64"
+          BUILD_DIR="build/Sketchex_artefacts/Release"
+          mkdir -p "$STAGE"
+          cp -R "$BUILD_DIR/VST3/Sketchex.vst3" "$STAGE/"
+          cp "$BUILD_DIR/Standalone/Sketchex" "$STAGE/"
+          tar -czf "Sketchex-$VERSION-linux-x64.tar.gz" "$STAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-installer
+          path: Sketchex-*-linux-x64.tar.gz
+
+  # ---------------------------------------------------------------------
+  # Only runs for an actual version-tag push (never workflow_dispatch --
+  # that path is for testing the build itself without publishing
+  # anything). Downloads what the three build jobs uploaded and attaches
+  # them to a new GitHub Release named after the tag.
+  # ---------------------------------------------------------------------
+  release:
+    needs: [build-windows, build-macos, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            artifacts/windows-installer/*.exe \
+            artifacts/macos-installer/*.zip \
+            artifacts/linux-installer/*.tar.gz \
+            --repo "${{ github.repository }}" \
+            --title "Sketchex ${{ github.ref_name }}" \
+            --generate-notes
