@@ -49,9 +49,11 @@ Grab the latest installer for your platform from the
 
 Sketchex is a MIDI effect: it makes no sound of its own.
 
-- **Ableton Live** — put Sketchex on a MIDI track, then a synth after it on
-  the same track (Live treats VST3 MIDI effects like its own MIDI effects).
-  Or route: synth track's *MIDI From* → the Sketchex track.
+- **Ableton Live** — Live has no slot for third-party MIDI plugins, so
+  Sketchex runs as an "instrument" on its own MIDI track and is routed to a
+  synth on a second track: on the synth track set **MIDI From** to the
+  Sketchex track, choose **Sketchex** (the plugin, not Pre/Post FX) in the
+  second dropdown, and set **Monitor → In**.
 - **Bitwig / Reaper / Cubase / Studio One** — insert before the instrument
   in the same chain; or route the track's MIDI output to another track.
 - **Logic Pro** — load it as a **MIDI FX** (AU) slot above the instrument.
