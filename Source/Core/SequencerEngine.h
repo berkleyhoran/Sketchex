@@ -57,6 +57,8 @@ struct TriggerInfo
     float x, y;
 };
 
+using VoiceKey = uint64_t; // ActiveSample::voiceKey()
+
 // Turns a Sketch + transport position into MIDI. Pure logic: no JUCE, no
 // allocation on the hot path beyond the output vectors' capacity growth,
 // deterministic given identical inputs (hence unit-testable).
@@ -87,24 +89,24 @@ public:
         double gateOffPpq = -1.0;    // pending gate note-off in host ppq, or -1
         bool active = false;
     };
-    const std::unordered_map<uint32_t, Voice>& voices() const { return voiceMap; }
+    const std::unordered_map<VoiceKey, Voice>& voices() const { return voiceMap; }
 
 private:
     void handleStep(int sampleOffset, double ppq, const EngineSettings& s, const Sketch& sketch,
                     std::vector<MidiEvent>& events, std::vector<TriggerInfo>& triggers);
     void updateBends(int sampleOffset, double ppq, const EngineSettings& s, const Sketch& sketch,
                      std::vector<MidiEvent>& events, float smoothing);
-    void noteOff(uint32_t strokeId, int sampleOffset, std::vector<MidiEvent>& events);
+    void noteOff(VoiceKey key, int sampleOffset, std::vector<MidiEvent>& events);
     int allocateChannel(const EngineSettings& s);
 
-    std::unordered_map<uint32_t, Voice> voiceMap;
+    std::unordered_map<VoiceKey, Voice> voiceMap;
     std::vector<ActiveSample> scratch;
     float playheadX = 0.0f;
     bool playing = false;
     long lastStepIndex = -1;
     int channelRotor = 0;
     double lastPpq = -1.0;
-    uint32_t leadStroke = 0;       // most recently triggered stroke (owns the bend wheel in single-channel mode)
+    VoiceKey leadVoice = 0;        // most recently triggered voice (owns the bend wheel in single-channel mode)
     int lastPortamentoCc = -1;
 };
 

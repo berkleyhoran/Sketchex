@@ -511,7 +511,7 @@ void SketchCanvas::paint(juce::Graphics& g)
         g.setFont(SketchexLookAndFeel::titleFont(22.0f));
         g.drawText("draw a melody", a, juce::Justification::centred, false);
         g.setFont(SketchexLookAndFeel::uiFont(13.0f));
-        g.drawText("left-drag to draw  /  right-drag to erase  /  higher = higher pitch",
+        g.drawText("left-drag to draw anything  /  right-drag to erase  /  higher = higher pitch  /  loops = chords",
                    a.withTrimmedTop(a.getHeight() * 0.5f + 20.0f).withHeight(20.0f), juce::Justification::centred, false);
     }
 }

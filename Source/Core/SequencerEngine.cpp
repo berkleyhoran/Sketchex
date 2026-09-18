@@ -31,7 +31,7 @@ void SequencerEngine::reset()
     lastStepIndex = -1;
     channelRotor = 0;
     lastPpq = -1.0;
-    leadStroke = 0;
+    leadVoice = 0;
 }
 
 int SequencerEngine::allocateChannel(const EngineSettings& s)
@@ -45,9 +45,9 @@ int SequencerEngine::allocateChannel(const EngineSettings& s)
     return ch;
 }
 
-void SequencerEngine::noteOff(uint32_t strokeId, int sampleOffset, std::vector<MidiEvent>& events)
+void SequencerEngine::noteOff(VoiceKey key, int sampleOffset, std::vector<MidiEvent>& events)
 {
-    auto it = voiceMap.find(strokeId);
+    auto it = voiceMap.find(key);
     if (it == voiceMap.end() || ! it->second.active)
         return;
     auto& v = it->second;
@@ -77,7 +77,7 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
     for (auto it = voiceMap.begin(); it != voiceMap.end();)
     {
         const bool stillDrawn = std::any_of(scratch.begin(), scratch.end(),
-                                            [&](const ActiveSample& a) { return a.strokeId == it->first; });
+                                            [&](const ActiveSample& a) { return a.voiceKey() == it->first; });
         if (! stillDrawn)
         {
             noteOff(it->first, sampleOffset, events);
@@ -92,7 +92,8 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
         const int lane = s.quantizer.laneForY(a.y);
         const int note = s.quantizer.noteForLane(lane);
         const int vel = std::clamp((int) std::lround(a.velocity * 127.0f), 1, 127);
-        auto& v = voiceMap[a.strokeId];
+        const VoiceKey key = a.voiceKey();
+        auto& v = voiceMap[key];
 
         auto startNote = [&](bool resetBend)
         {
@@ -112,7 +113,7 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
             v.lane = lane;
             v.active = true;
             v.gateOffPpq = s.gate < 0.999f ? ppq + (double) s.gate / (double) s.stepsPerBeat : -1.0;
-            leadStroke = a.strokeId;
+            leadVoice = key;
             triggers.push_back({ a.strokeId, note, x, a.y });
         };
 
@@ -122,7 +123,7 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
         }
         else if (s.retrigger)
         {
-            noteOff(a.strokeId, sampleOffset, events);
+            noteOff(key, sampleOffset, events);
             startNote(true);
         }
         else if (lane != v.lane)
@@ -138,7 +139,7 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
                 v.note = note;
                 v.lane = lane;
                 v.gateOffPpq = s.gate < 0.999f ? ppq + (double) s.gate / (double) s.stepsPerBeat : -1.0;
-                leadStroke = a.strokeId;
+                leadVoice = key;
                 triggers.push_back({ a.strokeId, note, x, a.y });
             }
             else
@@ -146,7 +147,7 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
                 // Keep the sounding pitch continuous across the note change:
                 // the bend re-expresses the old pitch relative to the new note.
                 const float soundingPitch = (float) v.note + v.bendSemis;
-                noteOff(a.strokeId, sampleOffset, events);
+                noteOff(key, sampleOffset, events);
                 v.active = false;
                 v.channel = v.channel; // channel kept
                 events.push_back({ MidiEvent::noteOn, sampleOffset, v.channel, note, vel });
@@ -164,7 +165,7 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
                     v.lastBend14 = b;
                 }
                 v.gateOffPpq = s.gate < 0.999f ? ppq + (double) s.gate / (double) s.stepsPerBeat : -1.0;
-                leadStroke = a.strokeId;
+                leadVoice = key;
                 triggers.push_back({ a.strokeId, note, x, a.y });
             }
         }
@@ -175,23 +176,23 @@ void SequencerEngine::updateBends(int sampleOffset, double ppq, const EngineSett
                                   std::vector<MidiEvent>& events, float smoothing)
 {
     const float x = (float) loopX(ppq, s.loopBeats);
-    for (auto& [id, v] : voiceMap)
+    sketch.sampleAt(x, scratch);
+    for (auto& [key, v] : voiceMap)
     {
         if (! v.active)
             continue;
-        const Stroke* stroke = nullptr;
-        for (const auto& st : sketch.strokes)
-            if (st.id == id) { stroke = &st; break; }
-        float y;
-        if (stroke == nullptr || ! stroke->yAt(x, y))
+        const ActiveSample* hit = nullptr;
+        for (const auto& a : scratch)
+            if (a.voiceKey() == key) { hit = &a; break; }
+        if (hit == nullptr)
             continue;
 
-        const float target = s.glide * (s.quantizer.continuousPitchForY(y) - (float) v.note);
+        const float target = s.glide * (s.quantizer.continuousPitchForY(hit->y) - (float) v.note);
         v.bendSemis += (target - v.bendSemis) * smoothing;
 
         // Single-channel mode: only the most recent voice drives the bend,
-        // otherwise several strokes would fight over one channel's wheel.
-        if (! s.multiChannel && id != leadStroke)
+        // otherwise several voices would fight over one channel's wheel.
+        if (! s.multiChannel && key != leadVoice)
             continue;
 
         const int b = bend14(v.bendSemis, s.bendRangeSemis);

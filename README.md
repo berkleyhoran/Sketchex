@@ -24,8 +24,10 @@ Grab the latest installer for your platform from the
 ## How it works
 
 - **Canvas** = time (left→right, one loop) × pitch (bottom→top).
-  Left-drag draws, right-drag / `E` erases, `Ctrl+Z` / `Ctrl+Y` undo/redo.
-  Overlapping strokes play as chords.
+  Left-drag draws *anything* — lines, squiggles, circles, going backwards —
+  right-drag / `E` erases, `Ctrl+Z` / `Ctrl+Y` undo/redo. Wherever the
+  playhead crosses ink it plays a note, so overlapping strokes and shapes
+  that cross the playhead twice (a circle) play as chords.
 - **Root / Scale / Octave / Range** — every lane on the canvas is a note in
   the chosen scale, so anything you draw is in key. 14 scales from Major to
   Chromatic.

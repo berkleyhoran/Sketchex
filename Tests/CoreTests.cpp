@@ -69,7 +69,7 @@ static void testSketch()
     auto& s = sk.beginStroke(120, 0.9f);
     s.addPoint({ 0.2f, 0.0f });
     s.addPoint({ 0.4f, 1.0f });
-    s.addPoint({ 0.3f, 0.5f }); // backwards -> clamped to x=0.4
+    s.addPoint({ 0.4f, 1.0f });
     CHECK(std::fabs(s.points.back().x - 0.4f) < 1e-6f);
 
     float y = -1;
@@ -83,6 +83,36 @@ static void testSketch()
     sk.sampleAt(0.3f, out);
     CHECK_EQ((int) out.size(), 1);
     CHECK(std::fabs(out[0].velocity - 0.9f) < 1e-6f);
+
+    // Free-form: a circle crosses the playhead twice (bottom and top),
+    // once at its left/right extremes.
+    Sketch skc;
+    auto& c = skc.beginStroke(0, 1.0f);
+    for (int i = 0; i <= 64; ++i)
+    {
+        const float ang = (float) i / 64.0f * 6.2831853f;
+        c.addPoint({ 0.5f + 0.25f * std::cos(ang), 0.5f + 0.25f * std::sin(ang) });
+    }
+    CHECK_EQ((int) c.points.size(), 65); // nothing clamped/dropped
+    skc.sampleAt(0.5f, out);
+    CHECK_EQ((int) out.size(), 2);
+    CHECK(out[0].y < 0.3f && out[1].y > 0.7f);
+    CHECK_EQ(out[0].crossing, 0);
+    CHECK_EQ(out[1].crossing, 1);
+    CHECK(out[0].voiceKey() != out[1].voiceKey());
+    skc.sampleAt(0.1f, out);
+    CHECK_EQ((int) out.size(), 0);
+    skc.sampleAt(0.26f, out); // just inside the left edge -> the two sides nearly meet, merged
+    CHECK((int) out.size() >= 1 && (int) out.size() <= 2);
+
+    // Backwards diagonal still plays.
+    Sketch skb;
+    auto& bk = skb.beginStroke(0, 1.0f);
+    bk.addPoint({ 0.9f, 0.0f });
+    bk.addPoint({ 0.1f, 1.0f });
+    skb.sampleAt(0.5f, out);
+    CHECK_EQ((int) out.size(), 1);
+    CHECK(std::fabs(out[0].y - 0.5f) < 1e-4f);
 
     // Round trip.
     const auto text = sk.serialize();
@@ -383,6 +413,34 @@ static void testEngineChords()
     CHECK_EQ(c5, 4);
 }
 
+static void testEngineCircle()
+{
+    std::printf("Engine: circle = two voices\n");
+    auto s = defaultSettings();
+    s.stepsPerBeat = 4;
+    Sketch sk;
+    auto& c = sk.beginStroke(0, 1.0f);
+    for (int i = 0; i <= 64; ++i)
+    {
+        const float ang = (float) i / 64.0f * 6.2831853f;
+        c.addPoint({ 0.5f + 0.3f * std::cos(ang), 0.5f + 0.4f * std::sin(ang) });
+    }
+    SequencerEngine eng;
+    std::vector<MidiEvent> all;
+    std::vector<TriggerInfo> trig;
+    run(eng, s, sk, 4.0, all, trig);
+    // At the centre step (x=0.5) both a low and a high note fire.
+    bool lowAtCentre = false, highAtCentre = false;
+    for (auto& t : trig)
+        if (std::fabs(t.x - 0.5f) < 0.02f) { if (t.y < 0.3f) lowAtCentre = true; if (t.y > 0.7f) highAtCentre = true; }
+    CHECK(lowAtCentre);
+    CHECK(highAtCentre);
+    CHECK_EQ(count(all, MidiEvent::noteOn), (int) trig.size());
+    // Every note-on has a matching note-off eventually (stroke ends before x=1).
+    CHECK_EQ(count(all, MidiEvent::noteOff), count(all, MidiEvent::noteOn));
+    CHECK(eng.voices().empty());
+}
+
 int main()
 {
     testScale();
@@ -397,6 +455,7 @@ int main()
     testEngineBendGlide();
     testEngineLoopWrap();
     testEngineChords();
+    testEngineCircle();
     std::printf("\n%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

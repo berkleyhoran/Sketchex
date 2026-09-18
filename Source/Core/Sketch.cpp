@@ -12,38 +12,61 @@ void Stroke::addPoint(Point p)
 {
     p.x = std::clamp(p.x, 0.0f, 1.0f);
     p.y = std::clamp(p.y, 0.0f, 1.0f);
-    if (! points.empty())
-        p.x = std::max(p.x, points.back().x);
     points.push_back(p);
 }
 
-bool Stroke::yAt(float x, float& yOut) const
+void Stroke::crossingsAt(float x, std::vector<float>& ys, float mergeEps) const
 {
-    if (points.empty() || x < points.front().x || x > points.back().x)
-        return false;
+    ys.clear();
+    if (points.empty())
+        return;
 
     if (points.size() == 1)
     {
-        yOut = points.front().y;
-        return true;
+        if (std::abs(points.front().x - x) < 1e-6f)
+            ys.push_back(points.front().y);
+        return;
     }
 
-    // First segment whose end is at/after x. Points are sorted by x so a
-    // binary search would work, but strokes are short (hundreds of points)
-    // and this runs a handful of times per audio block.
     for (size_t i = 1; i < points.size(); ++i)
     {
         const auto& a = points[i - 1];
         const auto& b = points[i];
-        if (x <= b.x)
+        // Half-open span so a vertex shared by two segments counts once.
+        const bool fwd = a.x <= x && x < b.x;
+        const bool back = b.x <= x && x < a.x;
+        if (! fwd && ! back)
         {
-            const float dx = b.x - a.x;
-            const float t = dx > 1e-6f ? (x - a.x) / dx : 1.0f;
-            yOut = a.y + (b.y - a.y) * t;
-            return true;
+            // Let the very last point (x == end) count for the final segment.
+            if (i == points.size() - 1 && std::abs(b.x - x) < 1e-6f)
+                ys.push_back(b.y);
+            continue;
         }
+        const float dx = b.x - a.x;
+        const float t = std::abs(dx) > 1e-9f ? (x - a.x) / dx : 0.0f;
+        ys.push_back(a.y + (b.y - a.y) * t);
     }
-    yOut = points.back().y;
+
+    std::sort(ys.begin(), ys.end());
+    // Merge near-duplicates (tight turns, self-touching lines).
+    size_t w = 0;
+    for (size_t r = 0; r < ys.size(); ++r)
+    {
+        if (w > 0 && ys[r] - ys[w - 1] < mergeEps)
+            ys[w - 1] = 0.5f * (ys[w - 1] + ys[r]);
+        else
+            ys[w++] = ys[r];
+    }
+    ys.resize(w);
+}
+
+bool Stroke::yAt(float x, float& yOut) const
+{
+    thread_local std::vector<float> ys;
+    crossingsAt(x, ys);
+    if (ys.empty())
+        return false;
+    yOut = ys.front();
     return true;
 }
 
@@ -104,11 +127,12 @@ void Sketch::erase(float x, float y, float radius)
 void Sketch::sampleAt(float x, std::vector<ActiveSample>& out) const
 {
     out.clear();
+    thread_local std::vector<float> ys;
     for (const auto& s : strokes)
     {
-        float y;
-        if (s.yAt(x, y))
-            out.push_back({ s.id, y, s.velocity });
+        s.crossingsAt(x, ys);
+        for (size_t i = 0; i < ys.size() && i < 256; ++i)
+            out.push_back({ s.id, (int) i, ys[i], s.velocity });
     }
 }
 
