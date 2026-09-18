@@ -81,7 +81,8 @@ private:
     std::atomic<float>* pRange = nullptr;
     std::atomic<float>* pLength = nullptr;
     std::atomic<float>* pRate = nullptr;
-    std::atomic<float>* pRetrigger = nullptr;
+    std::atomic<float>* pNoteMode = nullptr;
+    std::atomic<float>* pSwing = nullptr;
     std::atomic<float>* pGate = nullptr;
     std::atomic<float>* pGlide = nullptr;
     std::atomic<float>* pGlideMode = nullptr;

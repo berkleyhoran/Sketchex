@@ -23,6 +23,8 @@ SketchCanvas::SketchCanvas(SketchexAudioProcessor& p) : processor(p)
     setMouseCursor(juce::MouseCursor::CrosshairCursor);
     triggerScratch.reserve(64);
     particles.reserve(600);
+    quantizer = processor.currentQuantizer();
+    quantizerLanes = quantizer.numLanes();
     startTimerHz(kFps);
 }
 
@@ -36,20 +38,76 @@ SketchCanvas::~SketchCanvas()
 // ---------------------------------------------------------------------------
 juce::Rectangle<float> SketchCanvas::plotArea() const
 {
-    return getLocalBounds().toFloat().reduced(10.0f);
+    return getLocalBounds().toFloat().reduced(10.0f).withTrimmedRight(16.0f);
+}
+
+juce::Rectangle<float> SketchCanvas::scrollbarArea() const
+{
+    auto a = getLocalBounds().toFloat().reduced(10.0f);
+    return a.removeFromRight(12.0f);
+}
+
+float SketchCanvas::viewBottomOctaves() const
+{
+    const float h = viewHeightOctaves();
+    const float o = processor.apvts.getRawParameterValue(param::octave)->load();
+    return juce::jlimit(0.0f, (float) ScaleQuantizer::kOctaves - h, o);
+}
+
+float SketchCanvas::viewHeightOctaves() const
+{
+    return juce::jlimit(1.0f, (float) ScaleQuantizer::kOctaves,
+                        processor.apvts.getRawParameterValue(param::range)->load());
+}
+
+void SketchCanvas::setViewBottomOctaves(float o)
+{
+    const float h = viewHeightOctaves();
+    o = juce::jlimit(0.0f, (float) ScaleQuantizer::kOctaves - h, o);
+    auto* p = processor.apvts.getParameter(param::octave);
+    p->setValueNotifyingHost(p->convertTo0to1(o));
+}
+
+void SketchCanvas::setViewHeightOctaves(float h)
+{
+    h = juce::jlimit(1.0f, (float) ScaleQuantizer::kOctaves, std::round(h));
+    auto* p = processor.apvts.getParameter(param::range);
+    p->setValueNotifyingHost(p->convertTo0to1(h));
+}
+
+float SketchCanvas::yToPixel(float ny) const
+{
+    const auto a = plotArea();
+    const float oct = ScaleQuantizer::yToOctaves(ny);
+    const float rel = (oct - viewBottomOctaves()) / viewHeightOctaves(); // 0 = bottom of view, 1 = top
+    return a.getBottom() - rel * a.getHeight();
 }
 
 juce::Point<float> SketchCanvas::toNorm(juce::Point<float> px) const
 {
     const auto a = plotArea();
+    const float rel = (a.getBottom() - px.y) / a.getHeight();
+    const float oct = viewBottomOctaves() + rel * viewHeightOctaves();
     return { juce::jlimit(0.0f, 1.0f, (px.x - a.getX()) / a.getWidth()),
-             juce::jlimit(0.0f, 1.0f, 1.0f - (px.y - a.getY()) / a.getHeight()) };
+             juce::jlimit(0.0f, 1.0f, ScaleQuantizer::octavesToY(oct)) };
 }
 
 juce::Point<float> SketchCanvas::toPixel(float nx, float ny) const
 {
     const auto a = plotArea();
-    return { a.getX() + nx * a.getWidth(), a.getY() + (1.0f - ny) * a.getHeight() };
+    return { a.getX() + nx * a.getWidth(), yToPixel(ny) };
+}
+
+juce::Point<float> SketchCanvas::snapEdges(juce::Point<float> px) const
+{
+    // Hitting exactly x=0 (beat 1.1.1) or x=1 by hand is nearly
+    // impossible, and a stroke that starts 3px in misses the first step
+    // entirely. Snap to the edge when the pointer is anywhere near it.
+    constexpr float kSnap = 14.0f;
+    const auto a = plotArea();
+    if (px.x < a.getX() + kSnap) px.x = a.getX();
+    if (px.x > a.getRight() - kSnap) px.x = a.getRight();
+    return px;
 }
 
 void SketchCanvas::resized()
@@ -106,7 +164,20 @@ void SketchCanvas::clearAll()
 void SketchCanvas::mouseDown(const juce::MouseEvent& e)
 {
     lastMouse = e.position;
-    const auto n = toNorm(e.position);
+    if (scrollbarArea().contains(e.position))
+    {
+        draggingScrollbar = true;
+        const auto sb = scrollbarArea();
+        const float h = viewHeightOctaves() / (float) ScaleQuantizer::kOctaves;
+        const float top = 1.0f - (viewBottomOctaves() / (float) ScaleQuantizer::kOctaves + h);
+        const float thumbY = sb.getY() + top * sb.getHeight();
+        const float thumbH = h * sb.getHeight();
+        scrollbarDragOffset = (e.position.y >= thumbY && e.position.y <= thumbY + thumbH)
+                                  ? e.position.y - thumbY : thumbH * 0.5f;
+        mouseDrag(e);
+        return;
+    }
+    const auto n = toNorm(snapEdges(e.position));
     const bool eraseGesture = tool == Tool::erase || e.mods.isRightButtonDown() || e.mods.isAltDown();
 
     pushUndo();
@@ -131,7 +202,16 @@ void SketchCanvas::mouseDown(const juce::MouseEvent& e)
 void SketchCanvas::mouseDrag(const juce::MouseEvent& e)
 {
     lastMouse = e.position;
-    const auto n = toNorm(e.position);
+    if (draggingScrollbar)
+    {
+        const auto sb = scrollbarArea();
+        const float h = viewHeightOctaves();
+        const float thumbTopRel = (e.position.y - scrollbarDragOffset - sb.getY()) / sb.getHeight();
+        const float bottomOct = (float) ScaleQuantizer::kOctaves * (1.0f - thumbTopRel) - h;
+        setViewBottomOctaves(bottomOct);
+        return;
+    }
+    const auto n = toNorm(snapEdges(e.position));
     if (erasing)
     {
         const auto a = plotArea();
@@ -172,7 +252,29 @@ void SketchCanvas::mouseUp(const juce::MouseEvent&)
     }
     drawing = false;
     erasing = false;
+    draggingScrollbar = false;
     activeStrokeId = 0;
+}
+
+void SketchCanvas::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    if (drawing || erasing) return;
+    const float delta = w.deltaY * (w.isReversed ? -1.0f : 1.0f);
+    if (e.mods.isCtrlDown() || e.mods.isCommandDown())
+    {
+        // Zoom around the pointer's pitch.
+        const float anchorOct = ScaleQuantizer::yToOctaves(toNorm(e.position).y);
+        const float oldH = viewHeightOctaves();
+        const float newH = juce::jlimit(1.0f, (float) ScaleQuantizer::kOctaves, oldH - (delta > 0 ? 1.0f : -1.0f));
+        if (std::abs(newH - oldH) < 0.5f) return;
+        const float frac = (anchorOct - viewBottomOctaves()) / oldH;
+        setViewHeightOctaves(newH);
+        setViewBottomOctaves(anchorOct - frac * newH);
+    }
+    else
+    {
+        setViewBottomOctaves(viewBottomOctaves() + delta * 1.5f);
+    }
 }
 
 void SketchCanvas::mouseMove(const juce::MouseEvent& e)
@@ -199,6 +301,12 @@ void SketchCanvas::timerCallback()
     if (quantizer.numLanes() != quantizerLanes)
     {
         quantizerLanes = quantizer.numLanes();
+        pathsDirty = true;
+    }
+    if (std::abs(viewBottomOctaves() - cachedViewBottom) > 1e-5f || std::abs(viewHeightOctaves() - cachedViewHeight) > 1e-5f)
+    {
+        cachedViewBottom = viewBottomOctaves();
+        cachedViewHeight = viewHeightOctaves();
         pathsDirty = true;
     }
 
@@ -314,12 +422,12 @@ void SketchCanvas::paintLanes(juce::Graphics& g, juce::Rectangle<float> a)
 {
     const int lanes = quantizer.numLanes();
     if (lanes < 2) return;
-    const float laneH = a.getHeight() / (float) (lanes - 1);
+    const float laneH = a.getHeight() / (viewHeightOctaves() * (float) quantizer.lanesPerOctave());
 
-    // Lane bands (root lanes tinted).
     for (int i = 0; i < lanes; ++i)
     {
-        const float y = a.getBottom() - (float) i * laneH;
+        const float y = yToPixel(quantizer.yForLane(i));
+        if (y < a.getY() - laneH || y > a.getBottom() + laneH) continue;
         const bool root = quantizer.isRootLane(i);
         float flash = 0.0f;
         for (const auto& f : flashes)
@@ -338,7 +446,6 @@ void SketchCanvas::paintLanes(juce::Graphics& g, juce::Rectangle<float> a)
         g.setColour(SketchexLookAndFeel::ink().withAlpha(root ? 0.18f : 0.07f));
         g.drawHorizontalLine((int) y, a.getX() + 34.0f, a.getRight());
 
-        // Note names on the left (only when there's room).
         if (laneH >= 11.0f)
         {
             g.setColour(SketchexLookAndFeel::inkSoft().withAlpha(root ? 1.0f : 0.6f));
@@ -353,16 +460,25 @@ void SketchCanvas::paintLanes(juce::Graphics& g, juce::Rectangle<float> a)
     const int lengthChoice = (int) processor.apvts.getRawParameterValue(param::length)->load();
     const int rateChoice = (int) processor.apvts.getRawParameterValue(param::rate)->load();
     const double beats = param::lengthChoiceToBeats(lengthChoice);
-    const int stepsPerBeat = param::rateChoiceToStepsPerBeat(rateChoice);
-    const int totalSteps = (int) beats * stepsPerBeat;
-    if (totalSteps > 0 && a.getWidth() / (float) totalSteps >= 4.0f)
+    const double stepsPerBeat = param::rateChoiceToStepsPerBeat(rateChoice);
+    const float swing = processor.apvts.getRawParameterValue(param::swing)->load();
+    const int totalSteps = (int) std::floor(beats * stepsPerBeat + 1e-6);
+    // Beats/bars first (always), then the step grid if it isn't too dense.
+    for (int b = 0; b <= (int) beats; ++b)
+    {
+        const float x = a.getX() + a.getWidth() * (float) b / (float) beats;
+        const bool bar = (b % 4) == 0;
+        g.setColour(SketchexLookAndFeel::ink().withAlpha(bar ? 0.22f : 0.11f));
+        g.drawVerticalLine((int) x, a.getY(), a.getBottom());
+    }
+    if (totalSteps > 0 && a.getWidth() / (float) totalSteps >= 5.0f && stepsPerBeat > 1.0)
     {
         for (int i = 0; i <= totalSteps; ++i)
         {
-            const float x = a.getX() + a.getWidth() * (float) i / (float) totalSteps;
-            const bool bar = (i % (stepsPerBeat * 4)) == 0;
-            const bool beat = (i % stepsPerBeat) == 0;
-            g.setColour(SketchexLookAndFeel::ink().withAlpha(bar ? 0.22f : beat ? 0.11f : 0.045f));
+            double stepBeats = (double) i / stepsPerBeat;
+            if (i & 1) stepBeats += swing / (3.0 * stepsPerBeat);
+            const float x = a.getX() + a.getWidth() * (float) (stepBeats / beats);
+            g.setColour(SketchexLookAndFeel::ink().withAlpha(0.045f));
             g.drawVerticalLine((int) x, a.getY(), a.getBottom());
         }
     }
@@ -461,6 +577,25 @@ void SketchCanvas::paintParticles(juce::Graphics& g)
     }
 }
 
+void SketchCanvas::paintScrollbar(juce::Graphics& g)
+{
+    const auto sb = scrollbarArea();
+    g.setColour(SketchexLookAndFeel::ink().withAlpha(0.08f));
+    g.fillRoundedRectangle(sb, 6.0f);
+    const float h = viewHeightOctaves() / (float) ScaleQuantizer::kOctaves;
+    const float top = 1.0f - (viewBottomOctaves() / (float) ScaleQuantizer::kOctaves + h);
+    auto thumb = juce::Rectangle<float>(sb.getX(), sb.getY() + top * sb.getHeight(), sb.getWidth(), h * sb.getHeight());
+    g.setColour(SketchexLookAndFeel::accent().withAlpha(draggingScrollbar ? 0.9f : 0.6f));
+    g.fillRoundedRectangle(thumb.reduced(2.0f, 0.0f), 4.0f);
+    // Octave ticks
+    for (int o = 1; o < ScaleQuantizer::kOctaves; ++o)
+    {
+        const float y = sb.getBottom() - (float) o / (float) ScaleQuantizer::kOctaves * sb.getHeight();
+        g.setColour(SketchexLookAndFeel::ink().withAlpha(0.18f));
+        g.fillRect(sb.getX() + 3.0f, y - 0.5f, sb.getWidth() - 6.0f, 1.0f);
+    }
+}
+
 void SketchCanvas::paintCursor(juce::Graphics& g)
 {
     if (! mouseInside || drawing) return;
@@ -474,7 +609,7 @@ void SketchCanvas::paintCursor(juce::Graphics& g)
     else
     {
         // Snap preview: which note would this land on?
-        const auto n = toNorm(lastMouse);
+        const auto n = toNorm(snapEdges(lastMouse));
         const int lane = quantizer.laneForY(n.y);
         const auto snap = toPixel(n.x, quantizer.yForLane(lane));
         const int hue = (int) processor.apvts.getRawParameterValue(param::brushHue)->load();
@@ -504,6 +639,7 @@ void SketchCanvas::paint(juce::Graphics& g)
     }
     g.setColour(SketchexLookAndFeel::panelEdge());
     g.drawRoundedRectangle(a, 16.0f, 1.2f);
+    paintScrollbar(g);
 
     if (processor.editableSketch().empty() && ! drawing)
     {
@@ -511,7 +647,7 @@ void SketchCanvas::paint(juce::Graphics& g)
         g.setFont(SketchexLookAndFeel::titleFont(22.0f));
         g.drawText("draw a melody", a, juce::Justification::centred, false);
         g.setFont(SketchexLookAndFeel::uiFont(13.0f));
-        g.drawText("left-drag to draw anything  /  right-drag to erase  /  higher = higher pitch  /  loops = chords",
+        g.drawText("left-drag to draw anything  /  right-drag to erase  /  wheel scrolls, ctrl+wheel zooms octaves",
                    a.withTrimmedTop(a.getHeight() * 0.5f + 20.0f).withHeight(20.0f), juce::Justification::centred, false);
     }
 }

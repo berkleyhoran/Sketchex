@@ -20,19 +20,23 @@ struct Scale
 // ever append.
 const std::vector<Scale>& allScales();
 
-// Maps the canvas's vertical axis to scale-locked MIDI notes.
+// Maps the sketch's vertical axis to scale-locked MIDI notes.
 //
-// The playable range is `octaves` octaves starting at `lowOctave` (MIDI
-// octave, where 4 => middle C = 60 for root C). y is normalised 0..1 with
-// 1 = top of the canvas = highest note. The range always ends on the root
-// one octave above the last full octave, so a 1-octave C major range is
-// C..C (8 lanes), not C..B.
+// The pitch space is always the full kOctaves octaves starting at C0
+// (MIDI 12), ending on the root of the octave above the last full one.
+// y is normalised 0..1 over that whole space (1 = top = highest lane), so
+// a drawing keeps its absolute pitch no matter how the canvas is scrolled
+// or zoomed -- the view is purely a GUI concern (see SketchCanvas).
 class ScaleQuantizer
 {
 public:
-    void set(int rootNote /*0-11*/, int scaleIndex, int lowOctave, int octaves);
+    static constexpr int kOctaves = 8;   // C0 .. C8
+    static constexpr int kLowestOctave = 0;
+
+    void set(int rootNote /*0-11*/, int scaleIndex);
 
     int numLanes() const { return laneCount; }
+    int lanesPerOctave() const { return perOctave; }
 
     // Nearest lane for a normalised y, and its MIDI note.
     int laneForY(float y) const;
@@ -46,6 +50,11 @@ public:
     // Normalised y at the centre of a lane (for drawing lane guides).
     float yForLane(int lane) const;
 
+    // Normalised y <-> position in octaves (0 .. kOctaves) -- what the
+    // canvas view scrolls/zooms in.
+    static float yToOctaves(float y) { return y * (float) kOctaves; }
+    static float octavesToY(float o) { return o / (float) kOctaves; }
+
     bool isRootLane(int lane) const;
 
     int lowestNote() const { return noteForLane(0); }
@@ -54,8 +63,7 @@ public:
 private:
     int root = 0;
     int scaleIdx = 0;
-    int lowOct = 3;
-    int octs = 2;
+    int perOctave = 7;
     int laneCount = 1;
 };
 

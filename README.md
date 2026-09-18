@@ -28,13 +28,20 @@ Grab the latest installer for your platform from the
   right-drag / `E` erases, `Ctrl+Z` / `Ctrl+Y` undo/redo. Wherever the
   playhead crosses ink it plays a note, so overlapping strokes and shapes
   that cross the playhead twice (a circle) play as chords.
-- **Root / Scale / Octave / Range** — every lane on the canvas is a note in
-  the chosen scale, so anything you draw is in key. 14 scales from Major to
-  Chromatic.
-- **Length** (1–8 bars) and **Rate** (1/4 … 1/32) — the loop length and the
-  grid the notes retrigger on. Turn **Retrigger** off to hold one note per
-  stroke and only change pitch when the line crosses into a new lane.
-- **Gate** — how much of each step the note is held.
+- **Root / Scale** — every lane on the canvas is a note in the chosen
+  scale, so anything you draw is in key. 14 scales from Major to Chromatic.
+- **View Oct / View Rng** — the canvas is a window onto the full C0–C8
+  range: mouse-wheel scrolls, Ctrl+wheel zooms, or drag the scrollbar.
+  Drawings keep their absolute pitch when you scroll.
+- **Length** (½–16 bars) and **Rate** (1/1 … 1/64 incl. triplets and
+  dotted) — the loop length and the grid notes fire on. **Swing** delays
+  every second step.
+- **Notes** — **Retrig** fires a new note on every grid step while the
+  line is under the playhead (**Gate** sets how long each is held);
+  **Hold** presses the note down at the first step it meets ink and keeps
+  holding until the line ends or moves to a new lane.
+- Strokes that start near the left/right edge snap to it, so a note on
+  beat 1 is easy to hit.
 - **Glide** — how much the pitch follows the *exact* curve you drew between
   scale notes. Two modes:
   - **Bend** — continuous pitch-bend that traces your line. Set **Bend Rng**

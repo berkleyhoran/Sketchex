@@ -112,7 +112,7 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
             v.note = note;
             v.lane = lane;
             v.active = true;
-            v.gateOffPpq = s.gate < 0.999f ? ppq + (double) s.gate / (double) s.stepsPerBeat : -1.0;
+            v.gateOffPpq = (s.retrigger && s.gate < 0.999f) ? ppq + (double) s.gate / s.stepsPerBeat : -1.0;
             leadVoice = key;
             triggers.push_back({ a.strokeId, note, x, a.y });
         };
@@ -138,7 +138,7 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
                 events.push_back({ MidiEvent::noteOff, sampleOffset, ch, oldNote, 0 });
                 v.note = note;
                 v.lane = lane;
-                v.gateOffPpq = s.gate < 0.999f ? ppq + (double) s.gate / (double) s.stepsPerBeat : -1.0;
+                v.gateOffPpq = (s.retrigger && s.gate < 0.999f) ? ppq + (double) s.gate / s.stepsPerBeat : -1.0;
                 leadVoice = key;
                 triggers.push_back({ a.strokeId, note, x, a.y });
             }
@@ -164,7 +164,7 @@ void SequencerEngine::handleStep(int sampleOffset, double ppq, const EngineSetti
                     events.insert(events.end() - 1, { MidiEvent::pitchBend, sampleOffset, v.channel, b, 0 });
                     v.lastBend14 = b;
                 }
-                v.gateOffPpq = s.gate < 0.999f ? ppq + (double) s.gate / (double) s.stepsPerBeat : -1.0;
+                v.gateOffPpq = (s.retrigger && s.gate < 0.999f) ? ppq + (double) s.gate / s.stepsPerBeat : -1.0;
                 leadVoice = key;
                 triggers.push_back({ a.strokeId, note, x, a.y });
             }
@@ -221,7 +221,14 @@ void SequencerEngine::process(const BlockInfo& block, const EngineSettings& s, c
     }
 
     const double samplesPerBeat = block.sampleRate * 60.0 / std::max(1.0, block.bpm);
-    const double stepsPerBeat = (double) std::max(1, s.stepsPerBeat);
+    const double stepsPerBeat = std::max(0.0625, s.stepsPerBeat);
+    const double stepLen = 1.0 / stepsPerBeat;
+    // Swing: odd steps land late by up to a third of a step (66% swing).
+    auto stepPpqFor = [&](long index)
+    {
+        const double base = (double) index * stepLen;
+        return (index & 1) ? base + (double) s.swing * stepLen / 3.0 : base;
+    };
     const double stepAtStart = block.ppqAtStart * stepsPerBeat;
     const double ppqAtEnd = block.ppqAtStart + block.numSamples / samplesPerBeat;
 
@@ -253,7 +260,7 @@ void SequencerEngine::process(const BlockInfo& block, const EngineSettings& s, c
     for (;;)
     {
         const long next = lastStepIndex + 1;
-        const double stepPpq = (double) next / stepsPerBeat;
+        const double stepPpq = stepPpqFor(next);
         const double offsetD = (stepPpq - block.ppqAtStart) * samplesPerBeat;
         if (offsetD >= (double) block.numSamples - 0.5)
             break;

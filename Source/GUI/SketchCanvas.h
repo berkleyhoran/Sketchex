@@ -7,9 +7,11 @@
 namespace sketchex
 {
     // The drawing surface. Time runs left→right across the loop, pitch
-    // bottom→top. Left-drag draws a stroke, right-drag (or Eraser tool)
-    // erases, the playhead sweeps at host tempo and notes "pop" with a
-    // particle burst as they fire.
+    // bottom→top. The canvas is a scrollable/zoomable viewport onto the
+    // full C0..C8 pitch space: strokes are stored in absolute pitch, so
+    // scrolling never moves notes. Left-drag draws, right-drag / Eraser
+    // erases, wheel scrolls, Ctrl+wheel zooms; the playhead sweeps at
+    // host tempo and notes "pop" with a particle burst as they fire.
     class SketchCanvas : public juce::Component,
                          private juce::Timer
     {
@@ -37,13 +39,27 @@ namespace sketchex
         void mouseUp(const juce::MouseEvent&) override;
         void mouseMove(const juce::MouseEvent&) override;
         void mouseExit(const juce::MouseEvent&) override;
+        void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     private:
         void timerCallback() override;
 
         juce::Rectangle<float> plotArea() const;
+        juce::Rectangle<float> scrollbarArea() const;
+
+        // View window in octaves (bottom edge + height), read from params.
+        float viewBottomOctaves() const;
+        float viewHeightOctaves() const;
+        void setViewBottomOctaves(float o);
+        void setViewHeightOctaves(float o);
+
+        // Pixel <-> normalised (x in 0..1 over the loop, y in 0..1 over C0..C8).
         juce::Point<float> toNorm(juce::Point<float> px) const;
         juce::Point<float> toPixel(float nx, float ny) const;
+        float yToPixel(float ny) const;
+
+        // Snap a pointer position to the exact edges when it's close.
+        juce::Point<float> snapEdges(juce::Point<float> px) const;
 
         void pushUndo();
         void commit();
@@ -55,11 +71,14 @@ namespace sketchex
         void paintPlayhead(juce::Graphics&, juce::Rectangle<float>);
         void paintParticles(juce::Graphics&);
         void paintCursor(juce::Graphics&);
+        void paintScrollbar(juce::Graphics&);
 
         SketchexAudioProcessor& processor;
         Tool tool = Tool::draw;
         bool drawing = false;
         bool erasing = false;
+        bool draggingScrollbar = false;
+        float scrollbarDragOffset = 0.0f;
         uint32_t activeStrokeId = 0;
         juce::Point<float> lastMouse;
         bool mouseInside = false;
@@ -74,6 +93,7 @@ namespace sketchex
         };
         std::vector<CachedStroke> cachedPaths;
         bool pathsDirty = true;
+        float cachedViewBottom = -1.0f, cachedViewHeight = -1.0f;
 
         struct Particle
         {
@@ -101,7 +121,6 @@ namespace sketchex
 
         std::vector<TriggerInfo> triggerScratch;
         float displayedPlayhead = 0.0f;
-        float lastPlayheadForTrail = 0.0f;
         float timeSeconds = 0.0f;
         juce::Random rng;
         ScaleQuantizer quantizer;

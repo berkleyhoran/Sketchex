@@ -20,9 +20,12 @@ struct EngineSettings
 {
     ScaleQuantizer quantizer;
     double loopBeats = 4.0;          // loop length in quarter notes
-    int stepsPerBeat = 4;            // grid: 1 = 1/4, 2 = 1/8, 4 = 1/16, 8 = 1/32
-    bool retrigger = true;           // re-fire the note at every grid step
-    float gate = 1.0f;               // 0..1 fraction of a step the note is held (1 = tie into next)
+    double stepsPerBeat = 4.0;       // grid: 1 = 1/4, 2 = 1/8, 4 = 1/16, 3 = 1/8T, 0.25 = 1/1 ...
+    float swing = 0.0f;              // 0..1: every second step delayed by up to 1/3 of a step
+    bool retrigger = true;           // Retrig mode: re-fire the note at every grid step (Gate applies).
+                                     // Hold mode (false): note-on when ink appears under the playhead on
+                                     // a step, held until the ink ends or crosses into a new lane.
+    float gate = 1.0f;               // 0..1 fraction of a step the note is held (retrig mode only)
     float glide = 0.0f;              // 0 = none, 1 = follow the curve exactly
     GlideMode glideMode = GlideMode::bend;
     int bendRangeSemis = 12;         // must match the downstream synth's bend range

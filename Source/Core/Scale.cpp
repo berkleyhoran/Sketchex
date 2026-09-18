@@ -27,13 +27,12 @@ const std::vector<Scale>& allScales()
     return scales;
 }
 
-void ScaleQuantizer::set(int rootNote, int scaleIndex, int lowOctave, int octaves)
+void ScaleQuantizer::set(int rootNote, int scaleIndex)
 {
     root = std::clamp(rootNote, 0, 11);
     scaleIdx = std::clamp(scaleIndex, 0, (int) allScales().size() - 1);
-    lowOct = std::clamp(lowOctave, -1, 8);
-    octs = std::clamp(octaves, 1, 8);
-    laneCount = octs * (int) allScales()[(size_t) scaleIdx].degrees.size() + 1;
+    perOctave = (int) allScales()[(size_t) scaleIdx].degrees.size();
+    laneCount = kOctaves * perOctave + 1;
 }
 
 int ScaleQuantizer::laneForY(float y) const
@@ -50,7 +49,7 @@ int ScaleQuantizer::noteForLane(int lane) const
     const int octave = lane / n;
     const int step = lane % n;
     // MIDI octave numbering: C4 = 60, so octave o's C is (o + 1) * 12.
-    return std::clamp((lowOct + 1) * 12 + root + octave * 12 + deg[(size_t) step], 0, 127);
+    return std::clamp((kLowestOctave + 1) * 12 + root + octave * 12 + deg[(size_t) step], 0, 127);
 }
 
 float ScaleQuantizer::continuousPitchForY(float y) const

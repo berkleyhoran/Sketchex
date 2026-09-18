@@ -19,7 +19,8 @@ SketchexAudioProcessor::SketchexAudioProcessor()
     pRange = apvts.getRawParameterValue(param::range);
     pLength = apvts.getRawParameterValue(param::length);
     pRate = apvts.getRawParameterValue(param::rate);
-    pRetrigger = apvts.getRawParameterValue(param::retrigger);
+    pNoteMode = apvts.getRawParameterValue(param::noteMode);
+    pSwing = apvts.getRawParameterValue(param::swing);
     pGate = apvts.getRawParameterValue(param::gate);
     pGlide = apvts.getRawParameterValue(param::glide);
     pGlideMode = apvts.getRawParameterValue(param::glideMode);
@@ -59,10 +60,11 @@ bool SketchexAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) 
 EngineSettings SketchexAudioProcessor::buildSettings() const
 {
     EngineSettings s;
-    s.quantizer.set((int) pRoot->load(), (int) pScale->load(), (int) pOctave->load(), (int) pRange->load());
+    s.quantizer.set((int) pRoot->load(), (int) pScale->load());
     s.loopBeats = param::lengthChoiceToBeats((int) pLength->load());
     s.stepsPerBeat = param::rateChoiceToStepsPerBeat((int) pRate->load());
-    s.retrigger = pRetrigger->load() > 0.5f;
+    s.swing = pSwing->load();
+    s.retrigger = (int) pNoteMode->load() == 0;
     s.gate = pGate->load();
     s.glide = pGlide->load();
     s.glideMode = (int) pGlideMode->load() == 0 ? GlideMode::bend : GlideMode::legato;
@@ -75,7 +77,7 @@ EngineSettings SketchexAudioProcessor::buildSettings() const
 ScaleQuantizer SketchexAudioProcessor::currentQuantizer() const
 {
     ScaleQuantizer q;
-    q.set((int) pRoot->load(), (int) pScale->load(), (int) pOctave->load(), (int) pRange->load());
+    q.set((int) pRoot->load(), (int) pScale->load());
     return q;
 }
 
@@ -220,6 +222,7 @@ void SketchexAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty("sketch", juce::String(uiSketch.serialize()), nullptr);
+    state.setProperty("coords", "global", nullptr); // y is absolute pitch (C0..C8), not view-relative
     state.setProperty("internalBpm", internalBpm.load(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
@@ -235,10 +238,24 @@ void SketchexAudioProcessor::setStateInformation(const void* data, int sizeInByt
             const juce::String sketchText = tree.getProperty("sketch", "").toString();
             if (tree.hasProperty("internalBpm"))
                 internalBpm.store((double) tree.getProperty("internalBpm"));
+            const bool globalCoords = tree.getProperty("coords", "").toString() == "global";
+            // v0.1.x saved y relative to the visible octave window; convert
+            // to absolute pitch space using the window that was saved with it.
+            float oldOct = 3.0f, oldRange = 2.0f;
+            if (! globalCoords)
+            {
+                if (auto c = tree.getChildWithProperty("id", "octave"); c.isValid()) oldOct = (float) c.getProperty("value");
+                if (auto c = tree.getChildWithProperty("id", "range"); c.isValid()) oldRange = (float) c.getProperty("value");
+            }
             tree.removeProperty("sketch", nullptr);
+            tree.removeProperty("coords", nullptr);
             tree.removeProperty("internalBpm", nullptr);
             apvts.replaceState(tree);
             uiSketch = Sketch::deserialize(sketchText.toStdString());
+            if (! globalCoords)
+                for (auto& st : uiSketch.strokes)
+                    for (auto& pt : st.points)
+                        pt.y = ScaleQuantizer::octavesToY(oldOct + pt.y * oldRange);
             publishSketch();
         }
     }

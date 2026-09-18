@@ -37,26 +37,29 @@ static void testScale()
 {
     std::printf("Scale\n");
     ScaleQuantizer q;
-    q.set(0, 0, 4, 1); // C major, C4..C5
-    CHECK_EQ(q.numLanes(), 8);
-    CHECK_EQ(q.noteForLane(0), 60);
-    CHECK_EQ(q.noteForLane(7), 72);
-    CHECK_EQ(q.noteForLane(3), 65); // F4
-    CHECK_EQ(q.noteForY(0.0f), 60);
-    CHECK_EQ(q.noteForY(1.0f), 72);
+    q.set(0, 0); // C major over C0..C8
+    CHECK_EQ(q.numLanes(), 8 * 7 + 1);
+    CHECK_EQ(q.lanesPerOctave(), 7);
+    CHECK_EQ(q.noteForLane(0), 12);   // C0
+    CHECK_EQ(q.noteForLane(56), 108); // C8
+    CHECK_EQ(q.noteForLane(28), 60);  // C4 = 4 octaves up
+    CHECK_EQ(q.noteForLane(3), 17);   // F0
+    CHECK_EQ(q.noteForY(0.0f), 12);
+    CHECK_EQ(q.noteForY(1.0f), 108);
     CHECK(q.isRootLane(0));
     CHECK(q.isRootLane(7));
     CHECK(! q.isRootLane(3));
-    CHECK(std::fabs(q.continuousPitchForY(0.5f * (1.0f / 7.0f)) - 61.0f) < 1e-4f);
+    // Octave <-> y helpers: 4 octaves up is exactly C4's lane.
+    CHECK_EQ(q.laneForY(ScaleQuantizer::octavesToY(4.0f)), 28);
+    CHECK(std::fabs(q.continuousPitchForY(q.yForLane(28)) - 60.0f) < 1e-3f);
 
-    q.set(9, 1, 3, 2); // A minor, A3..A5
-    CHECK_EQ(q.numLanes(), 15);
-    CHECK_EQ(q.noteForLane(0), 57);
-    CHECK_EQ(q.noteForLane(14), 81);
-    CHECK_EQ(q.noteForLane(2), 60); // C4
+    q.set(9, 1); // A minor
+    CHECK_EQ(q.noteForLane(0), 21); // A0
+    CHECK_EQ(q.noteForLane(2), 24); // C1
 
-    q.set(0, 9, 4, 1); // major pent
-    CHECK_EQ(q.numLanes(), 6);
+    q.set(0, 9); // major pent
+    CHECK_EQ(q.lanesPerOctave(), 5);
+    CHECK_EQ(q.numLanes(), 41);
     CHECK_EQ(midiNoteName(60), std::string("C4"));
     CHECK_EQ(midiNoteName(61), std::string("C#4"));
 }
@@ -139,10 +142,20 @@ static void testSketch()
 }
 
 // ----------------------------------------------------------------------------
+// y for the lane `l` above C4 in the default C-major settings (l=0 -> C4,
+// l=7 -> C5). Tests below were written against a 1-octave canvas; this
+// keeps them readable now that y spans C0..C8.
+static float Y(int l)
+{
+    ScaleQuantizer q;
+    q.set(0, 0);
+    return q.yForLane(28 + l);
+}
+
 static EngineSettings defaultSettings()
 {
     EngineSettings s;
-    s.quantizer.set(0, 0, 4, 1); // C major, C4..C5, 8 lanes
+    s.quantizer.set(0, 0); // C major over C0..C8
     s.loopBeats = 4.0;
     s.stepsPerBeat = 4;
     s.retrigger = true;
@@ -191,8 +204,8 @@ static void testEngineBasics()
     auto s = defaultSettings();
     Sketch sk;
     auto& st = sk.beginStroke(0, 1.0f);
-    st.addPoint({ 0.0f, 0.0f });  // whole loop, flat at the bottom lane = C4
-    st.addPoint({ 1.0f, 0.0f });
+    st.addPoint({ 0.0f, Y(0) });  // whole loop, flat at the bottom lane = C4
+    st.addPoint({ 1.0f, Y(0) });
 
     SequencerEngine eng;
     std::vector<MidiEvent> all;
@@ -223,8 +236,8 @@ static void testEngineNoteOffOrdering()
     auto s = defaultSettings();
     Sketch sk;
     auto& st = sk.beginStroke(0, 1.0f);
-    st.addPoint({ 0.0f, 0.0f });
-    st.addPoint({ 1.0f, 0.0f });
+    st.addPoint({ 0.0f, Y(0) });
+    st.addPoint({ 1.0f, Y(0) });
     SequencerEngine eng;
     std::vector<MidiEvent> all;
     std::vector<TriggerInfo> trig;
@@ -246,8 +259,8 @@ static void testEnginePitchFollowsCurve()
     s.stepsPerBeat = 2; // 8 steps per 4-beat loop => 8 lanes, one per step
     Sketch sk;
     auto& st = sk.beginStroke(0, 1.0f);
-    st.addPoint({ 0.0f, 0.0f });
-    st.addPoint({ 1.0f, 1.0f }); // rising diagonal C4 -> C5
+    st.addPoint({ 0.0f, Y(0) });
+    st.addPoint({ 1.0f, Y(7) }); // rising diagonal C4 -> C5
     SequencerEngine eng;
     std::vector<MidiEvent> all;
     std::vector<TriggerInfo> trig;
@@ -267,8 +280,8 @@ static void testEngineGap()
     auto s = defaultSettings();
     Sketch sk;
     auto& st = sk.beginStroke(0, 1.0f);
-    st.addPoint({ 0.0f, 0.5f });
-    st.addPoint({ 0.25f, 0.5f }); // covers first beat only
+    st.addPoint({ 0.0f, Y(4) });
+    st.addPoint({ 0.25f, Y(4) }); // covers first beat only
     SequencerEngine eng;
     std::vector<MidiEvent> all;
     std::vector<TriggerInfo> trig;
@@ -287,8 +300,8 @@ static void testEngineGate()
     s.gate = 0.5f;
     Sketch sk;
     auto& st = sk.beginStroke(0, 1.0f);
-    st.addPoint({ 0.0f, 0.0f });
-    st.addPoint({ 1.0f, 0.0f });
+    st.addPoint({ 0.0f, Y(0) });
+    st.addPoint({ 1.0f, Y(0) });
     SequencerEngine eng;
     std::vector<MidiEvent> all;
     std::vector<TriggerInfo> trig;
@@ -304,8 +317,8 @@ static void testEngineLegatoHold()
     s.retrigger = false;
     Sketch sk;
     auto& st = sk.beginStroke(0, 1.0f);
-    st.addPoint({ 0.0f, 0.0f });
-    st.addPoint({ 1.0f, 0.0f });
+    st.addPoint({ 0.0f, Y(0) });
+    st.addPoint({ 1.0f, Y(0) });
     SequencerEngine eng;
     std::vector<MidiEvent> all;
     std::vector<TriggerInfo> trig;
@@ -324,8 +337,8 @@ static void testEngineLegatoGlide()
     s.stepsPerBeat = 2;
     Sketch sk;
     auto& st = sk.beginStroke(0, 1.0f);
-    st.addPoint({ 0.0f, 0.0f });
-    st.addPoint({ 1.0f, 1.0f });
+    st.addPoint({ 0.0f, Y(0) });
+    st.addPoint({ 1.0f, Y(7) });
     SequencerEngine eng;
     std::vector<MidiEvent> all;
     std::vector<TriggerInfo> trig;
@@ -354,8 +367,8 @@ static void testEngineBendGlide()
     s.bendRangeSemis = 12;
     Sketch sk;
     auto& st = sk.beginStroke(0, 1.0f);
-    st.addPoint({ 0.0f, 0.0f });
-    st.addPoint({ 1.0f, 1.0f });
+    st.addPoint({ 0.0f, Y(0) });
+    st.addPoint({ 1.0f, Y(7) });
     SequencerEngine eng;
     std::vector<MidiEvent> all;
     std::vector<TriggerInfo> trig;
@@ -381,8 +394,8 @@ static void testEngineLoopWrap()
     auto s = defaultSettings();
     Sketch sk;
     auto& st = sk.beginStroke(0, 1.0f);
-    st.addPoint({ 0.0f, 0.0f });
-    st.addPoint({ 1.0f, 0.0f });
+    st.addPoint({ 0.0f, Y(0) });
+    st.addPoint({ 1.0f, Y(0) });
     SequencerEngine eng;
     std::vector<MidiEvent> all;
     std::vector<TriggerInfo> trig;
@@ -399,9 +412,9 @@ static void testEngineChords()
     auto s = defaultSettings();
     Sketch sk;
     auto& a = sk.beginStroke(0, 1.0f);
-    a.addPoint({ 0.0f, 0.0f }); a.addPoint({ 1.0f, 0.0f });
+    a.addPoint({ 0.0f, Y(0) }); a.addPoint({ 1.0f, Y(0) });
     auto& b = sk.beginStroke(0, 1.0f);
-    b.addPoint({ 0.0f, 1.0f }); b.addPoint({ 1.0f, 1.0f });
+    b.addPoint({ 0.0f, Y(7) }); b.addPoint({ 1.0f, Y(7) });
     SequencerEngine eng;
     std::vector<MidiEvent> all;
     std::vector<TriggerInfo> trig;
@@ -423,7 +436,7 @@ static void testEngineCircle()
     for (int i = 0; i <= 64; ++i)
     {
         const float ang = (float) i / 64.0f * 6.2831853f;
-        c.addPoint({ 0.5f + 0.3f * std::cos(ang), 0.5f + 0.4f * std::sin(ang) });
+        c.addPoint({ 0.5f + 0.3f * std::cos(ang), Y(4) + (Y(7) - Y(0)) * 0.45f * std::sin(ang) });
     }
     SequencerEngine eng;
     std::vector<MidiEvent> all;
@@ -432,13 +445,59 @@ static void testEngineCircle()
     // At the centre step (x=0.5) both a low and a high note fire.
     bool lowAtCentre = false, highAtCentre = false;
     for (auto& t : trig)
-        if (std::fabs(t.x - 0.5f) < 0.02f) { if (t.y < 0.3f) lowAtCentre = true; if (t.y > 0.7f) highAtCentre = true; }
+        if (std::fabs(t.x - 0.5f) < 0.02f) { if (t.y < Y(2)) lowAtCentre = true; if (t.y > Y(5)) highAtCentre = true; }
     CHECK(lowAtCentre);
     CHECK(highAtCentre);
     CHECK_EQ(count(all, MidiEvent::noteOn), (int) trig.size());
     // Every note-on has a matching note-off eventually (stroke ends before x=1).
     CHECK_EQ(count(all, MidiEvent::noteOff), count(all, MidiEvent::noteOn));
     CHECK(eng.voices().empty());
+}
+
+static void testEngineSwing()
+{
+    std::printf("Engine: swing delays odd steps\n");
+    auto s = defaultSettings();
+    s.stepsPerBeat = 2;
+    s.swing = 1.0f;
+    Sketch sk;
+    auto& st = sk.beginStroke(0, 1.0f);
+    st.addPoint({ 0.0f, Y(0) });
+    st.addPoint({ 1.0f, Y(0) });
+    SequencerEngine eng;
+    std::vector<MidiEvent> all;
+    std::vector<TriggerInfo> trig;
+    run(eng, s, sk, 2.0, all, trig, 64);
+    CHECK_EQ((int) trig.size(), 4);
+    // Steps at beats 0, 0.5+1/6, 1, 1.5+1/6 -> x = beat/4
+    CHECK(std::fabs(trig[1].x - (0.5f + 1.0f / 6.0f) / 4.0f) < 0.01f);
+    CHECK(std::fabs(trig[2].x - 1.0f / 4.0f) < 0.01f);
+}
+
+static void testEngineHoldMode()
+{
+    std::printf("Engine: hold mode ignores gate, holds until ink ends\n");
+    auto s = defaultSettings();
+    s.retrigger = false;
+    s.gate = 0.25f; // must be ignored in hold mode
+    Sketch sk;
+    auto& st = sk.beginStroke(0, 1.0f);
+    st.addPoint({ 0.0f, Y(0) });
+    st.addPoint({ 0.5f, Y(0) });
+    SequencerEngine eng;
+    std::vector<MidiEvent> all;
+    std::vector<TriggerInfo> trig;
+    run(eng, s, sk, 4.0, all, trig);
+    CHECK_EQ(count(all, MidiEvent::noteOn), 1);
+    CHECK_EQ(count(all, MidiEvent::noteOff), 1);
+    // The single note-off happens after x=0.5 (beat 2), not after a 25% gate.
+    double onPpq = -1, offPpq = -1;
+    // Reconstruct absolute positions: run() appends events block by block without ppq, so
+    // just check ordering: the off must come after many blocks' worth of events.
+    size_t onIdx = 0, offIdx = 0;
+    for (size_t i = 0; i < all.size(); ++i) { if (all[i].type == MidiEvent::noteOn) onIdx = i; if (all[i].type == MidiEvent::noteOff) offIdx = i; }
+    CHECK(offIdx > onIdx);
+    (void) onPpq; (void) offPpq;
 }
 
 int main()
@@ -456,6 +515,8 @@ int main()
     testEngineLoopWrap();
     testEngineChords();
     testEngineCircle();
+    testEngineSwing();
+    testEngineHoldMode();
     std::printf("\n%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

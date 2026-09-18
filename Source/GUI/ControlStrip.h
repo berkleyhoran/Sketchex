@@ -43,10 +43,10 @@ namespace sketchex
         SketchexAudioProcessor& processor;
         SketchCanvas& canvas;
 
-        Combo root, scale, length, rate, glideMode;
-        Knob octave, range, gate, glide, bendRange, channel, velocity, hue;
-        juce::ToggleButton retrigger { "Retrigger" }, multiChan { "Multi-Ch" };
-        std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> retriggerAttach, multiChanAttach;
+        Combo root, scale, length, rate, glideMode, noteMode;
+        Knob octave, range, gate, glide, bendRange, channel, velocity, hue, swing;
+        juce::ToggleButton multiChan { "Multi-Ch" };
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> multiChanAttach;
 
         juce::TextButton drawBtn { "Draw" }, eraseBtn { "Erase" }, undoBtn { "Undo" }, redoBtn { "Redo" },
                          clearBtn { "Clear" }, panicBtn { "Panic" };

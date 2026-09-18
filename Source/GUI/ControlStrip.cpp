@@ -12,11 +12,13 @@ ControlStrip::ControlStrip(SketchexAudioProcessor& p, SketchCanvas& c) : process
 
     makeCombo(root, param::root, param::rootNames(), "Root", L::accent());
     makeCombo(scale, param::scale, param::scaleNames(), "Scale", L::accent());
-    makeKnob(octave, param::octave, "Octave", L::accent());
-    makeKnob(range, param::range, "Range", L::accent());
+    makeKnob(octave, param::octave, "View Oct", L::accent());
+    makeKnob(range, param::range, "View Rng", L::accent());
     makeCombo(length, param::length, param::lengthNames(), "Length", L::accent3());
     makeCombo(rate, param::rate, param::rateNames(), "Rate", L::accent3());
+    makeKnob(swing, param::swing, "Swing", L::accent3());
 
+    makeCombo(noteMode, param::noteMode, param::noteModeNames(), "Notes", L::accent3());
     makeKnob(gate, param::gate, "Gate", L::accent3());
     makeKnob(glide, param::glide, "Glide", L::accent2());
     makeCombo(glideMode, param::glideMode, param::glideModeNames(), "Glide Mode", L::accent2());
@@ -25,25 +27,24 @@ ControlStrip::ControlStrip(SketchexAudioProcessor& p, SketchCanvas& c) : process
     makeKnob(velocity, param::velocity, "Velocity", L::accent4());
     makeKnob(hue, param::brushHue, "Colour", L::accent4());
     hue.slider.textFromValueFunction = [](double v) { return juce::String((int) v) + juce::String::charToString((juce::juce_wchar) 0xb0); };
-    octave.slider.textFromValueFunction = [](double v) { return "C" + juce::String((int) v); };
+    octave.slider.textFromValueFunction = [](double v) { return "C" + juce::String((int) std::floor(v + 1e-4)); };
+    swing.slider.textFromValueFunction = [](double v) { return juce::String((int) std::round(50.0 + v * 16.7)) + "%"; };
     gate.slider.textFromValueFunction = [](double v) { return juce::String((int) std::round(v * 100.0)) + "%"; };
     glide.slider.textFromValueFunction = [](double v) { return juce::String((int) std::round(v * 100.0)) + "%"; };
     velocity.slider.textFromValueFunction = [](double v) { return juce::String((int) std::round(v * 127.0)); };
     bendRange.slider.textFromValueFunction = [](double v) { return juce::String((int) v) + " st"; };
     range.slider.textFromValueFunction = [](double v) { return juce::String((int) v) + " oct"; };
-    for (auto* k : { &hue, &octave, &gate, &glide, &velocity, &bendRange, &range })
+    for (auto* k : { &hue, &octave, &gate, &glide, &velocity, &bendRange, &range, &swing })
         k->slider.updateText();
 
-    for (auto* b : { &retrigger, &multiChan })
-    {
-        b->setClickingTogglesState(true);
-        addAndMakeVisible(b);
-    }
-    retrigger.getProperties().set(L::accentProperty, (juce::int64) L::accent3().getARGB());
+    multiChan.setClickingTogglesState(true);
+    addAndMakeVisible(multiChan);
     multiChan.getProperties().set(L::accentProperty, (juce::int64) L::accent4().getARGB());
-    retriggerAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.apvts, param::retrigger, retrigger);
     multiChanAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.apvts, param::multiChan, multiChan);
-    retrigger.setTooltip("Re-fire the note on every grid step while the line is under the playhead");
+    noteMode.box.setTooltip("Retrig: a new note on every grid step while the line is under the playhead (Gate applies).  Hold: the note is held down from the step where the line starts until it ends or moves to a new lane.");
+    octave.slider.setTooltip("Which octave sits at the bottom of the canvas (mouse wheel on the canvas also scrolls)");
+    range.slider.setTooltip("How many octaves are visible (Ctrl+wheel on the canvas zooms)");
+    swing.slider.setTooltip("Delays every second grid step, up to a 66% triplet feel");
     multiChan.setTooltip("One MIDI channel per stroke so each line can bend independently (MPE-style)");
     bendRange.slider.setTooltip("Must match the pitch-bend range of the synth after Sketchex");
     glideMode.box.setTooltip("Bend: pitch-bend follows your line exactly.  Legato: overlapping notes + CC5/65, so the synth's own portamento glides");
@@ -159,33 +160,33 @@ void ControlStrip::resized()
     top.removeFromTop(14);
     bottom.removeFromTop(14);
 
-    // Row 1: Root Scale Octave Range | Length Rate
+    // Row 1: Root Scale ViewOct ViewRng | Length Rate Swing | Velocity Colour
     {
-        const int comboW = 92, knobW = 84;
+        const int knobW = 78;
         auto r = top;
-        layoutLabelled(root.box, root.label, r.removeFromLeft(72).withTrimmedBottom(r.getHeight() - 16 - 28));
-        layoutLabelled(scale.box, scale.label, r.removeFromLeft(comboW + 30).withTrimmedBottom(r.getHeight() - 16 - 28));
+        layoutLabelled(root.box, root.label, r.removeFromLeft(66).withTrimmedBottom(r.getHeight() - 16 - 28));
+        layoutLabelled(scale.box, scale.label, r.removeFromLeft(118).withTrimmedBottom(r.getHeight() - 16 - 28));
         layoutLabelled(octave.slider, octave.label, r.removeFromLeft(knobW));
         layoutLabelled(range.slider, range.label, r.removeFromLeft(knobW));
-        r.removeFromLeft(12);
-        layoutLabelled(length.box, length.label, r.removeFromLeft(comboW).withTrimmedBottom(r.getHeight() - 16 - 28));
-        layoutLabelled(rate.box, rate.label, r.removeFromLeft(72).withTrimmedBottom(r.getHeight() - 16 - 28));
-        r.removeFromLeft(12);
+        r.removeFromLeft(10);
+        layoutLabelled(length.box, length.label, r.removeFromLeft(88).withTrimmedBottom(r.getHeight() - 16 - 28));
+        layoutLabelled(rate.box, rate.label, r.removeFromLeft(74).withTrimmedBottom(r.getHeight() - 16 - 28));
+        layoutLabelled(swing.slider, swing.label, r.removeFromLeft(knobW));
+        r.removeFromLeft(10);
         layoutLabelled(velocity.slider, velocity.label, r.removeFromLeft(knobW));
         layoutLabelled(hue.slider, hue.label, r.removeFromLeft(knobW));
     }
-    // Row 2: Retrigger Gate | Glide GlideMode BendRange | MultiCh Channel
+    // Row 2: Notes Gate | Glide GlideMode BendRange | MultiCh Channel
     {
-        const int knobW = 84;
+        const int knobW = 78;
         auto r = bottom;
-        auto retrigCell = r.removeFromLeft(88);
-        retrigger.setBounds(retrigCell.withTrimmedTop(16).withHeight(28).reduced(2, 0));
+        layoutLabelled(noteMode.box, noteMode.label, r.removeFromLeft(88).withTrimmedBottom(r.getHeight() - 16 - 28));
         layoutLabelled(gate.slider, gate.label, r.removeFromLeft(knobW));
-        r.removeFromLeft(12);
+        r.removeFromLeft(10);
         layoutLabelled(glide.slider, glide.label, r.removeFromLeft(knobW));
         layoutLabelled(glideMode.box, glideMode.label, r.removeFromLeft(96).withTrimmedBottom(r.getHeight() - 16 - 28));
         layoutLabelled(bendRange.slider, bendRange.label, r.removeFromLeft(knobW));
-        r.removeFromLeft(12);
+        r.removeFromLeft(10);
         auto multiCell = r.removeFromLeft(88);
         multiChan.setBounds(multiCell.withTrimmedTop(16).withHeight(28).reduced(2, 0));
         layoutLabelled(channel.slider, channel.label, r.removeFromLeft(knobW));
